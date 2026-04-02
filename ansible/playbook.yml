@@ -1,0 +1,30 @@
+---
+# Playbook principal Cloud-1
+# ===========================
+# Déploie l'application Inception complète sur le serveur distant.
+#
+# Usage :
+#   ansible-playbook playbook.yml --ask-vault-pass
+#
+# Pour un dry-run (vérification sans rien modifier) :
+#   ansible-playbook playbook.yml --ask-vault-pass --check
+
+- name: Deploy Cloud-1 (Inception) on remote server
+  hosts: cloud_servers
+  gather_facts: true
+
+  roles:
+    - role: common
+      tags: [common, setup]
+
+    - role: docker
+      tags: [docker, setup]
+
+    - role: duckdns
+      tags: [duckdns, dns]
+
+    - role: tls
+      tags: [tls, ssl]
+
+    - role: app
+      tags: [app, deploy]

@@ -1,0 +1,75 @@
+---
+# Rôle TLS — Certificats Let's Encrypt
+# ======================================
+#
+# COMMENT ÇA MARCHE :
+# 1. Certbot (l'outil de Let's Encrypt) demande un certificat
+# 2. Let's Encrypt vérifie qu'on contrôle le domaine via un "challenge" :
+#    → Il met un fichier dans /.well-known/acme-challenge/
+#    → Let's Encrypt essaie d'accéder à http://ton-domaine/.well-known/...
+#    → Si ça marche → tu contrôles le domaine → certificat délivré
+# 3. Le certificat est valide 90 jours → un cron le renouvelle automatiquement
+#
+# IMPORTANT : Pour que le challenge fonctionne, il faut que :
+# - Le port 80 soit ouvert (fait dans le rôle common)
+# - Le domaine pointe vers notre IP (fait dans le rôle duckdns)
+# - Nginx ne soit PAS encore lancé (sinon conflit de port)
+#
+# C'est pour ça que ce rôle s'exécute AVANT le rôle app.
+
+# ─── 1. Installer Certbot ──────────────────────────────
+
+- name: Install certbot
+  apt:
+    name: certbot
+    state: present
+
+# ─── 2. Arrêter les services qui écoutent sur le port 80 ──
+# Certbot en mode "standalone" a besoin du port 80 libre.
+
+- name: Stop any service using port 80 (if running)
+  shell: |
+    docker compose -f {{ app_dir }}/docker-compose.yml down 2>/dev/null || true
+  changed_when: false
+  ignore_errors: true
+  # ignore_errors: true → si docker n'est pas encore lancé ou si le fichier
+  # n'existe pas, on ne veut pas que le playbook s'arrête.
+
+# ─── 3. Obtenir le certificat ──────────────────────────
+# --standalone : certbot lance son propre serveur web temporaire sur le port 80
+# --agree-tos : accepte les conditions d'utilisation
+# --non-interactive : pas de questions interactives
+# --keep-existing : si un certificat valide existe déjà, ne pas le renouveler
+
+- name: Obtain Let's Encrypt certificate
+  command: >
+    certbot certonly
+    --standalone
+    --agree-tos
+    --non-interactive
+    --email {{ wp_admin_email }}
+    --domain {{ domain_name }}
+    --keep-existing
+  register: certbot_result
+  changed_when: "'Certificate not yet due for renewal' not in certbot_result.stdout"
+  # `register` sauvegarde le résultat de la commande dans une variable.
+  # `changed_when` permet de déterminer si le certificat a été créé/renouvelé
+  # ou s'il existait déjà. Ainsi la sortie Ansible est correcte (ok vs changed).
+
+# ─── 4. Configurer le renouvellement automatique ───────
+# Les certificats Let's Encrypt expirent après 90 jours.
+# Ce cron tente un renouvellement 2 fois par jour (recommandé par Let's Encrypt).
+# Certbot ne renouvelle que si le certificat expire dans moins de 30 jours.
+
+- name: Setup auto-renewal cron for Let's Encrypt
+  cron:
+    name: "Certbot auto-renewal"
+    hour: "3,15"                  # À 3h et 15h
+    minute: "30"                  # À la 30ème minute
+    job: "certbot renew --quiet --pre-hook 'docker compose -f {{ app_dir }}/docker-compose.yml stop nginx' --post-hook 'docker compose -f {{ app_dir }}/docker-compose.yml start nginx'"
+  # --pre-hook : arrête nginx AVANT le renouvellement (libère le port 80)
+  # --post-hook : relance nginx APRÈS le renouvellement
+  # --quiet : pas de sortie sauf en cas d'erreur
+  #
+  # Ces hooks ne sont exécutés QUE si un renouvellement a lieu.
+  # Si le certificat est encore valide → rien ne se passe.

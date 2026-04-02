@@ -1,0 +1,27 @@
+# --- Secrets & Credentials ---
+*.env
+.env.*
+vault.yml
+**/vault.yml
+*.key
+*.pem
+*.crt
+*.p12
+
+# --- Ansible ---
+*.retry
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# --- Zone.Identifier (WSL artifacts) ---
+*:Zone.Identifier
+
+# --- Other ---
+subject.md

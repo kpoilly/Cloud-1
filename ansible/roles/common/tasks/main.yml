@@ -1,0 +1,109 @@
+---
+# Rôle COMMON — Sécurisation et préparation du serveur
+# =====================================================
+# Ce rôle est le premier à s'exécuter. Il s'assure que le serveur est :
+# - À jour (patchs de sécurité)
+# - Protégé par un firewall
+# - Équipé des outils de base
+#
+# CHAQUE TÂCHE EST IDEMPOTENTE :
+# → Premier lancement = tout s'installe (changed)
+# → Deuxièmes lancements = rien ne change (ok)
+
+# ─── 1. Mise à jour des paquets ────────────────────────
+# Équivalent de : apt update && apt upgrade -y
+# Pourquoi ? Un serveur non mis à jour = des failles de sécurité connues.
+
+- name: Update apt cache
+  apt:
+    update_cache: true
+    cache_valid_time: 3600        # Ne re-update que si le cache a plus d'1h
+  # cache_valid_time évite de taper sur les serveurs APT à chaque lancement.
+  # Sans ça, chaque lancement ferait un apt update (lent et inutile).
+
+- name: Upgrade all packages
+  apt:
+    upgrade: safe                 # "safe" = upgrade sans supprimer de paquets
+  # "safe" est plus prudent que "dist" qui peut supprimer des paquets
+  # obsolètes. On ne veut pas casser un serveur en production.
+
+# ─── 2. Installation des dépendances de base ───────────
+# Des outils qu'on va utiliser dans les prochains rôles.
+
+- name: Install base packages
+  apt:
+    name:
+      - curl                      # Télécharger des fichiers (DuckDNS, etc.)
+      - apt-transport-https       # Nécessaire pour les repos APT en HTTPS
+      - ca-certificates           # Certificats racine (pour HTTPS)
+      - gnupg                     # Gestion des clés GPG (pour le repo Docker)
+      - python3-pip               # Pip pour Python (requis par certains modules Ansible)
+      - cron                      # Tâches planifiées (DuckDNS, certbot)
+    state: present                # "Je veux que ces paquets soient présents"
+  # state: present = installer si absent, ne rien faire si déjà là.
+  # state: absent  = désinstaller si présent.
+  # state: latest  = installer OU mettre à jour vers la dernière version.
+
+# ─── 3. Configuration du firewall UFW ──────────────────
+# UFW = "Uncomplicated Firewall". C'est un frontend pour iptables.
+#
+# PRINCIPE : On bloque TOUT par défaut, puis on ouvre seulement
+# les ports nécessaires. C'est le "deny by default".
+#
+# Ports ouverts :
+#   22  = SSH (sinon on perd l'accès au serveur !)
+#   80  = HTTP (nécessaire pour Let's Encrypt + redirection vers HTTPS)
+#   443 = HTTPS (le trafic web chiffré)
+#
+# Ports fermés (entre autres) :
+#   3306 = MariaDB → inaccessible depuis internet !
+#   9000 = PHP-FPM → inaccessible depuis internet !
+#   8080 = PHPMyAdmin → inaccessible depuis internet !
+#
+# Ces services ne sont accessibles qu'en INTERNE via le réseau Docker.
+
+- name: Install UFW
+  apt:
+    name: ufw
+    state: present
+
+- name: Allow SSH (port 22)
+  ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+  # On ouvre SSH EN PREMIER, avant d'activer le firewall.
+  # Si on active le firewall avant d'autoriser SSH → on se lock out !
+
+- name: Allow HTTP (port 80)
+  ufw:
+    rule: allow
+    port: "80"
+    proto: tcp
+
+- name: Allow HTTPS (port 443)
+  ufw:
+    rule: allow
+    port: "443"
+    proto: tcp
+
+- name: Enable UFW with default deny policy
+  ufw:
+    state: enabled
+    policy: deny                  # Politique par défaut = TOUT bloquer
+  # "enabled" active le firewall. "policy: deny" = tout ce qui n'est pas
+  # explicitement autorisé ci-dessus est bloqué.
+  #
+  # Résultat : quelqu'un qui essaie de se connecter à MariaDB (port 3306)
+  # depuis internet → connexion refusée. Sécurité ✓
+
+# ─── 4. S'assurer que le service cron tourne ───────────
+# On en aura besoin pour DuckDNS et le renouvellement TLS.
+
+- name: Ensure cron service is running
+  service:
+    name: cron
+    state: started                # "Je veux que le service tourne"
+    enabled: true                 # "Je veux qu'il démarre au boot"
+  # enabled: true = crée un lien symlink dans /etc/systemd/system/
+  # pour que systemd lance le service automatiquement au démarrage.

@@ -1,0 +1,89 @@
+# docker-compose.yml — Généré par Ansible, ne pas éditer manuellement
+# ====================================================================
+
+volumes:
+  wordpress:
+    driver: local
+    driver_opts:
+      type: none
+      device: {{ data_dir }}/wordpress
+      o: bind
+  mariadb:
+    driver: local
+    driver_opts:
+      type: none
+      device: {{ data_dir }}/mysql
+      o: bind
+
+networks:
+  inception:
+    driver: bridge
+
+services:
+
+  # --- Reverse Proxy ---
+  nginx:
+    container_name: nginx
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    volumes:
+      - wordpress:/var/www/html
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - inception
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - wordpress
+      - phpmyadmin
+    restart: unless-stopped
+
+  # --- Base de données ---
+  mariadb:
+    container_name: mariadb
+    build:
+      context: ./mariadb
+      dockerfile: Dockerfile
+    env_file: .env
+    volumes:
+      - mariadb:/var/lib/mysql
+    networks:
+      - inception
+    expose:
+      - "3306"
+    restart: unless-stopped
+
+  # --- WordPress (PHP-FPM) ---
+  wordpress:
+    container_name: wordpress
+    build:
+      context: ./wordpress
+      dockerfile: Dockerfile
+    env_file: .env
+    volumes:
+      - wordpress:/var/www/html
+    networks:
+      - inception
+    depends_on:
+      - mariadb
+    expose:
+      - "9000"
+    restart: unless-stopped
+
+  # --- PHPMyAdmin ---
+  phpmyadmin:
+    container_name: phpmyadmin
+    image: phpmyadmin:latest
+    environment:
+      PMA_HOST: mariadb
+      PMA_PORT: 3306
+      PMA_ABSOLUTE_URI: https://{{ domain_name }}/phpmyadmin/
+    networks:
+      - inception
+    depends_on:
+      - mariadb
+    expose:
+      - "80"
+    restart: unless-stopped

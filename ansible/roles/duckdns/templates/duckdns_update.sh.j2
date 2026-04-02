@@ -1,0 +1,14 @@
+#!/bin/bash
+# Script de mise à jour DuckDNS — Généré par Ansible
+# ====================================================
+# Appelle l'API DuckDNS pour associer notre domaine à notre IP.
+#
+# L'API est très simple :
+# GET https://www.duckdns.org/update?domains=SUBDOMAIN&token=TOKEN&ip=
+# → Le paramètre ip= vide = "utilise mon IP publique actuelle"
+# → Réponse : "OK" ou "KO"
+
+# Extraire le sous-domaine (kpoilly.duckdns.org → kpoilly)
+SUBDOMAIN=$(echo "{{ domain_name }}" | sed 's/.duckdns.org//')
+
+curl -s "https://www.duckdns.org/update?domains=${SUBDOMAIN}&token={{ vault_duckdns_token }}&ip=" -o /dev/null

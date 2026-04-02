@@ -1,0 +1,75 @@
+# nginx.conf — Généré par Ansible
+# =================================
+# Reverse proxy pour WordPress (/) et PHPMyAdmin (/phpmyadmin)
+# Redirection HTTP → HTTPS + headers de sécurité
+
+# Bloc HTTP → Redirection vers HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {{ domain_name }};
+
+    # Nécessaire pour le challenge Let's Encrypt (renouvellement TLS)
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    # Tout le reste → HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# Bloc HTTPS principal
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+
+    server_name {{ domain_name }};
+
+    # --- Certificats TLS (Let's Encrypt, montés en volume) ---
+    ssl_certificate     /etc/letsencrypt/live/{{ domain_name }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ domain_name }}/privkey.pem;
+
+    # --- Protocoles TLS sécurisés ---
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # --- Headers de sécurité ---
+    add_header X-Content-Type-Options nosniff;
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header X-XSS-Protection "1; mode=block";
+
+    # --- WordPress (site principal) ---
+    root /var/www/html;
+    index index.php index.html;
+
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    # PHP → WordPress container via FastCGI
+    location ~ \.php$ {
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass wordpress:9000;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param PATH_INFO $fastcgi_path_info;
+    }
+
+    # --- PHPMyAdmin (sous /phpmyadmin) ---
+    location /phpmyadmin/ {
+        proxy_pass http://phpmyadmin:80/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Bloquer l'accès aux fichiers sensibles
+    location ~ /\.(ht|git) {
+        deny all;
+    }
+}

@@ -1,0 +1,65 @@
+---
+# Rôle DUCKDNS — Configuration du nom de domaine gratuit
+# =======================================================
+#
+# COMMENT ÇA MARCHE :
+# 1. Tu t'inscris sur duckdns.org (gratuit, via GitHub/Google)
+# 2. Tu choisis un sous-domaine : "kpoilly" → kpoilly.duckdns.org
+# 3. DuckDNS te donne un TOKEN (une clé secrète)
+# 4. Tu appelles leur API avec ce token pour dire :
+#    "kpoilly.duckdns.org doit pointer vers l'IP 51.15.x.x"
+# 5. Un cron appelle cette API toutes les 5 min pour garder l'IP à jour
+#
+# POURQUOI UN CRON ?
+# Si Scaleway change l'IP de ton instance (rare mais possible),
+# le cron mettra automatiquement à jour le DNS.
+
+# ─── 1. Créer le répertoire et le script ───────────────
+
+- name: Create DuckDNS directory
+  file:
+    path: /opt/duckdns
+    state: directory
+    mode: "0700"
+  # Le répertoire DOIT exister AVANT qu'on y copie le script.
+  # L'ordre des tâches dans Ansible est crucial : de haut en bas.
+
+- name: Create DuckDNS update script
+  template:
+    src: duckdns_update.sh.j2
+    dest: /opt/duckdns/update.sh
+    mode: "0700"                  # rwx------ (seul root peut lire/exécuter)
+  # mode "0700" parce que ce script contient le token DuckDNS.
+  # On ne veut pas qu'un autre utilisateur puisse le lire.
+  #
+  # `template` (pas `copy`) parce qu'on injecte le token depuis le vault.
+
+# ─── 2. Exécuter le script une première fois ──────────
+# Pour que le DNS pointe vers notre IP dès maintenant.
+
+- name: Run DuckDNS update now
+  command: /opt/duckdns/update.sh
+  changed_when: true
+  # On force changed_when: true car c'est un appel API externe,
+  # et on ne peut pas savoir si l'IP a changé ou pas.
+
+# ─── 3. Configurer le cron ─────────────────────────────
+# Le module `cron` d'Ansible crée une entrée dans la crontab.
+
+- name: Setup DuckDNS cron job (every 5 minutes)
+  cron:
+    name: "DuckDNS update"        # Identifiant unique pour cette entrée cron
+    minute: "*/5"                 # Toutes les 5 minutes
+    job: "/opt/duckdns/update.sh >> /opt/duckdns/duckdns.log 2>&1"
+  # La crontab ressemblera à :
+  # */5 * * * * /opt/duckdns/update.sh >> /opt/duckdns/duckdns.log 2>&1
+  #
+  # Format cron : minute heure jour mois jour_semaine commande
+  # */5 = "toutes les 5 minutes"
+  # *   = "tous" (toutes les heures, tous les jours, etc.)
+  #
+  # >> = ajouter au fichier de log
+  # 2>&1 = rediriger les erreurs vers le même fichier
+  #
+  # Le `name:` permet à Ansible de retrouver cette entrée cron
+  # pour la modifier ou la supprimer (idempotence).

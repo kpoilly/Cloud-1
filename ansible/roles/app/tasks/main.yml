@@ -1,0 +1,159 @@
+---
+# Rôle APP — Déploiement de l'application WordPress
+# ====================================================
+#
+# C'est le rôle final. À ce stade, le serveur a déjà :
+# ✅ Paquets à jour + firewall (rôle common)
+# ✅ Docker installé et démarré (rôle docker)
+# ✅ DNS configuré (rôle duckdns)
+# ✅ Certificat TLS obtenu (rôle tls)
+#
+# Ce rôle va :
+# 1. Créer les répertoires sur le serveur
+# 2. Copier les fichiers Docker (Dockerfiles, configs)
+# 3. Générer les fichiers templatisés (.env, docker-compose, etc.)
+# 4. Lancer docker compose up
+# 5. Vérifier que tout fonctionne
+
+# ─── 1. Créer les répertoires ──────────────────────────
+
+- name: Create application directory
+  file:
+    path: "{{ app_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Create data directories for persistent volumes
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:                           # ← BOUCLE : exécute la tâche pour chaque élément
+    - "{{ data_dir }}/wordpress"
+    - "{{ data_dir }}/mysql"
+  # `loop` évite de dupliquer la même tâche.
+  # {{ item }} prend la valeur de chaque élément de la liste.
+  # Ansible affichera :
+  #   TASK [Create data directories] *****
+  #   ok: [scaleway1] => (item=/opt/cloud1/data/wordpress)
+  #   ok: [scaleway1] => (item=/opt/cloud1/data/mysql)
+
+# ─── 2. Copier les fichiers Docker statiques ───────────
+# `copy` copie les fichiers depuis roles/app/files/ vers le serveur.
+# Ce sont les fichiers qui n'ont PAS de variables Jinja2 dedans.
+
+- name: Copy MariaDB files
+  copy:
+    src: "mariadb/"               # Source : roles/app/files/mariadb/
+    dest: "{{ app_dir }}/mariadb/"
+    mode: preserve                # Garde les permissions d'origine
+  # `src` sans chemin absolu → Ansible cherche dans roles/app/files/
+  # Le "/" final dans "mariadb/" copie le CONTENU du dossier (pas le dossier lui-même)
+
+- name: Copy WordPress files
+  copy:
+    src: "wordpress/"
+    dest: "{{ app_dir }}/wordpress/"
+    mode: preserve
+
+- name: Copy Nginx Dockerfile
+  copy:
+    src: "nginx/"
+    dest: "{{ app_dir }}/nginx/"
+    mode: preserve
+
+# ─── 3. Générer les fichiers templatisés ────────────────
+# `template` prend un fichier .j2, remplace les {{ variables }}
+# par leurs valeurs réelles, et copie le résultat sur le serveur.
+
+- name: Generate docker-compose.yml from template
+  template:
+    src: docker-compose.yml.j2    # Source : roles/app/templates/
+    dest: "{{ app_dir }}/docker-compose.yml"
+    mode: "0644"
+  # Le fichier .j2 contient : device: {{ data_dir }}/wordpress
+  # Le fichier généré contiendra : device: /opt/cloud1/data/wordpress
+
+- name: Generate .env from template (secrets injected from vault)
+  template:
+    src: env.j2
+    dest: "{{ app_dir }}/.env"
+    mode: "0600"                  # rw------- SEUL root peut lire
+  # MODE 0600 : ce fichier contient les mots de passe !
+  # Personne d'autre que root ne doit pouvoir le lire.
+
+- name: Generate init.sql from template
+  template:
+    src: init.sql.j2
+    dest: "{{ app_dir }}/mariadb/tools/init.sql"
+    mode: "0600"
+
+- name: Generate nginx config from template
+  template:
+    src: nginx.conf.j2
+    dest: "{{ app_dir }}/nginx/conf/nginx.conf"
+    mode: "0644"
+
+# ─── 4. S'assurer que les scripts sont exécutables ────
+
+- name: Make scripts executable
+  file:
+    path: "{{ item }}"
+    mode: "0755"
+  loop:
+    - "{{ app_dir }}/mariadb/tools/init_db.sh"
+    - "{{ app_dir }}/wordpress/tools/wp_setup.sh"
+
+# ─── 5. Lancer l'application ──────────────────────────
+
+- name: Build and start containers with Docker Compose
+  command: docker compose up -d --build
+  args:
+    chdir: "{{ app_dir }}"        # Se placer dans le bon répertoire
+  # --build : reconstruit les images (important si on a modifié un Dockerfile)
+  # -d : mode détaché (en arrière-plan)
+  #
+  # Équivalent à :
+  #   cd /opt/cloud1 && docker compose up -d --build
+
+# ─── 6. Health check — Vérification post-déploiement ──
+# On attend que les containers soient prêts avant de déclarer victoire.
+
+- name: Wait for containers to be healthy (30s)
+  pause:
+    seconds: 30
+  # WordPress a besoin de temps pour télécharger les fichiers,
+  # créer la config, et se connecter à MariaDB.
+
+- name: Verify all containers are running
+  shell: |
+    docker compose -f {{ app_dir }}/docker-compose.yml ps --format json | \
+    python3 -c "
+    import sys, json
+    lines = sys.stdin.read().strip().split('\n')
+    all_running = True
+    for line in lines:
+        c = json.loads(line)
+        if c.get('State') != 'running':
+            print(f'ERREUR: {c[\"Name\"]} est {c[\"State\"]}')
+            all_running = False
+    if not all_running:
+        sys.exit(1)
+    print('Tous les containers sont running ✓')
+    "
+  register: health_check
+  changed_when: false
+
+- name: Test HTTPS connectivity
+  uri:
+    url: "https://{{ domain_name }}"
+    validate_certs: true          # Vérifie que le certificat TLS est valide
+    status_code: [200, 302]       # 200=OK, 302=redirect (normal pour WP)
+    timeout: 30
+  register: https_test
+  retries: 3                      # Réessaie 3 fois si ça échoue
+  delay: 10                       # Attend 10 secondes entre chaque essai
+  until: https_test.status in [200, 302]
+  # Le module `uri` fait une requête HTTP.
+  # `retries` + `delay` + `until` = boucle de retry.
+  # WordPress peut mettre quelques secondes à être prêt, d'où les retries.

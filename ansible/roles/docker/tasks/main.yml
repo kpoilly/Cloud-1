@@ -1,0 +1,95 @@
+---
+# Rôle DOCKER — Installation de Docker depuis le repo officiel
+# =============================================================
+#
+# POURQUOI PAS `apt install docker.io` ?
+# → Le paquet `docker.io` d'Ubuntu est souvent en retard de plusieurs
+#   versions. Le repo officiel Docker fournit la dernière version stable.
+#
+# CE QU'ON VA FAIRE :
+# 1. Ajouter la clé GPG de Docker (pour vérifier l'authenticité des paquets)
+# 2. Ajouter le dépôt APT officiel Docker
+# 3. Installer docker-ce + docker compose plugin
+# 4. S'assurer que Docker démarre au boot
+
+# ─── 1. Ajouter la clé GPG Docker ──────────────────────
+# GPG = système de signature cryptographique.
+# Quand tu fais `apt install`, APT vérifie que le paquet vient bien
+# de Docker (et pas d'un attaquant) grâce à cette clé.
+
+- name: Create directory for Docker GPG key
+  file:
+    path: /etc/apt/keyrings
+    state: directory              # "Ce répertoire doit exister"
+    mode: "0755"
+  # Le module `file` gère fichiers et répertoires.
+  # state: directory = créer si absent (comme mkdir -p)
+  # state: file      = vérifier qu'un fichier existe
+  # state: absent    = supprimer
+
+- name: Download Docker GPG key
+  get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+  # get_url = télécharger un fichier (comme wget/curl)
+  # Si le fichier existe déjà avec le même contenu → rien ne se passe (idempotent)
+
+# ─── 2. Ajouter le dépôt APT Docker ────────────────────
+# On dit à APT : "Va aussi chercher des paquets sur download.docker.com"
+
+- name: Add Docker APT repository
+  apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/ubuntu
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+  # ansible_distribution_release = variable "magique" d'Ansible.
+  # Quand gather_facts: true est dans le playbook, Ansible collecte
+  # automatiquement des infos sur le serveur : OS, version, CPU, RAM, etc.
+  # Ici ça retournera "jammy", "focal", etc. selon la version d'Ubuntu.
+  #
+  # Ça crée le fichier /etc/apt/sources.list.d/docker.list
+
+- name: Update apt cache after adding Docker repo
+  apt:
+    update_cache: true
+  # Nécessaire après avoir ajouté un nouveau repo,
+  # sinon APT ne connaît pas encore les paquets Docker.
+
+# ─── 3. Installer Docker ───────────────────────────────
+
+- name: Install Docker packages
+  apt:
+    name:
+      - docker-ce                 # Le moteur Docker
+      - docker-ce-cli             # La commande `docker` en CLI
+      - containerd.io             # Le runtime de containers (couche basse)
+      - docker-compose-plugin     # La commande `docker compose` (v2)
+    state: present
+  # docker-compose-plugin = "docker compose" (avec un espace)
+  # C'est la v2, un plugin Go intégré à Docker.
+  # L'ancienne v1 "docker-compose" (avec un tiret) était en Python, plus lente.
+
+# ─── 4. Démarrer et activer Docker ─────────────────────
+
+- name: Start and enable Docker service
+  service:
+    name: docker
+    state: started                # "Docker doit tourner maintenant"
+    enabled: true                 # "Docker doit démarrer au boot"
+  # C'est CRUCIAL pour le sujet : "Your site can restart automatically
+  # if the server is rebooted." → Docker démarre au boot + les containers
+  # ont restart: unless-stopped → tout remonte automatiquement.
+
+# ─── 5. Smoke test ─────────────────────────────────────
+# On vérifie que Docker fonctionne vraiment.
+
+- name: Verify Docker is working
+  command: docker info
+  changed_when: false             # Cette commande ne modifie rien
+  # changed_when: false dit à Ansible "cette commande est en lecture seule,
+  # ne la compte pas comme un changement". Sinon elle serait toujours
+  # en jaune (changed) dans la sortie, ce qui serait trompeur.

@@ -60,7 +60,7 @@ server {
     }
 
     # --- PHPMyAdmin (sous /phpmyadmin) ---
-    location /phpmyadmin/ {
+    location ^~ /phpmyadmin/ {
         proxy_pass http://phpmyadmin:80/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

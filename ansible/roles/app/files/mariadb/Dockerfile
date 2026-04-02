@@ -2,7 +2,8 @@ FROM debian:bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     mariadb-server \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/lib/mysql/*
 
 # Préparer les répertoires nécessaires à MariaDB
 RUN mkdir -p /var/run/mysqld \

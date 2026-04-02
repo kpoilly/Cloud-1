@@ -6,14 +6,7 @@ set -e
 
 WP_PATH="/var/www/html"
 
-# --- Installer WP-CLI (si pas déjà installé) ---
-if [ ! -f /usr/local/bin/wp ]; then
-    echo "[wp_setup] Installation de WP-CLI..."
-    wget -q https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar \
-        -O /usr/local/bin/wp
-    chmod +x /usr/local/bin/wp
-fi
-
+# WP-CLI est déjà installé via le Dockerfile
 # --- Télécharger WordPress (si pas déjà fait) ---
 if [ ! -f "${WP_PATH}/wp-login.php" ]; then
     echo "[wp_setup] Téléchargement de WordPress..."

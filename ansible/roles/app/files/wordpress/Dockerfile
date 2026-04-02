@@ -1,11 +1,15 @@
 FROM debian:bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
+    wget ca-certificates \
     php php-fpm \
     php-mysql php-gd php-cli php-curl php-xml php-mbstring \
     mariadb-client \
     && rm -rf /var/lib/apt/lists/*
+
+# Télécharger WP-CLI pendant le build
+RUN wget -q https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -O /usr/local/bin/wp \
+    && chmod +x /usr/local/bin/wp
 
 # Créer le répertoire pour le socket PHP-FPM
 RUN mkdir -p /run/php

@@ -62,6 +62,12 @@
     dest: "{{ app_dir }}/nginx/"
     mode: preserve
 
+- name: Create Nginx conf directory
+  file:
+    path: "{{ app_dir }}/nginx/conf"
+    state: directory
+    mode: "0755"
+
 # ─── 3. Générer les fichiers templatisés ────────────────
 # `template` prend un fichier .j2, remplace les {{ variables }}
 # par leurs valeurs réelles, et copie le résultat sur le serveur.
